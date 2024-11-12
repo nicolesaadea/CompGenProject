@@ -1,5 +1,7 @@
 import time
 from memory_profiler import memory_usage
+import tracemalloc
+import os
 import random
 from Bio import SeqIO
 from CuckooFilterImpl import CuckooFilter
@@ -16,27 +18,63 @@ def get_kmers(sequence, k):
         yield sequence[i:i + k]
 
 def profile_cuckoo_filter(cf, sequence, k):
-    """Profile a cuckoo filter's performance"""
+    """Profile a cuckoo filter's performance."""
     inserted_kmers = list(get_kmers(sequence, k))
 
-    def insert_all_kmers():
-        for kmer in inserted_kmers:
-            cf.insert(kmer)
+    # Set up memory tracking
+    tracemalloc.start()
 
-    start_time = time.time()
-    memory_used = profile_memory(insert_all_kmers)
-    elapsed_time = time.time() - start_time
+    # Time and memory for insertion
+    start_time = time.perf_counter()
+    for kmer in inserted_kmers:
+        cf.insert(kmer)
+    insertion_time = time.perf_counter() - start_time
+    current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    insertion_memory = peak / (1024 * 1024)  # Convert to MB
 
-    print(f"Insertion Time: {elapsed_time:.4f} seconds")
-    print(f"Memory Used for Insertion: {memory_used:.4f} MB")
+    print(f"Insertion Time: {insertion_time:.4f} seconds")
+    print(f"Peak Memory Used for Insertion: {insertion_memory:.4f} MB")
 
-    # Lookup testing
-    lookup_kmers = random.sample(inserted_kmers, min(5, len(inserted_kmers)))
-    start_time = time.time()
-    for kmer in lookup_kmers:
-        print(f"Lookup {kmer}: {cf.lookup(kmer)}")
-    end_time = time.time()
-    print(f"Lookup Time: {end_time - start_time:.4f} seconds")
+    # Lookup testing with a larger sample size
+    lookup_kmers_present = random.sample(inserted_kmers, min(1000, len(inserted_kmers)))
+    lookup_kmers_absent = [''.join(random.choices('ACGT', k=k)) for _ in range(1000)]
+    total_lookups = lookup_kmers_present + lookup_kmers_absent
+    random.shuffle(total_lookups)
+
+    # Time lookup operations
+    start_time = time.perf_counter()
+    lookup_results = [cf.lookup(kmer) for kmer in total_lookups]
+    lookup_time = time.perf_counter() - start_time
+
+    # Calculate true positive and false positive rates
+    true_positives = sum(1 for i in range(len(lookup_kmers_present)) if lookup_results[i])
+    false_positives = sum(1 for i in range(len(lookup_kmers_present), len(total_lookups)) if lookup_results[i])
+
+    print(f"Lookup Time for {len(total_lookups)} k-mers: {lookup_time:.4f} seconds")
+    print(f"True Positive Rate: {true_positives / len(lookup_kmers_present):.4f}")
+    print(f"False Positive Rate: {false_positives / len(lookup_kmers_absent):.4f}")
+    
+def generate_synthetic_fastq(filename, num_reads, read_length, duplication_rate):
+    """Generate a synthetic FASTQ file with specified parameters"""
+    sequences = []
+    num_unique = int(num_reads * (1 - duplication_rate))
+    num_duplicates = num_reads - num_unique
+
+    # Generate unique reads
+    for _ in range(num_unique):
+        seq = ''.join(random.choices('ACGT', k=read_length))
+        sequences.append(seq)
+
+    # Generate duplicate reads
+    duplicates = random.choices(sequences, k=num_duplicates)
+    sequences.extend(duplicates)
+    random.shuffle(sequences)
+
+    # Write to FASTQ file
+    with open(filename, "w") as fh:
+        for i, seq in enumerate(sequences):
+            fh.write(f"@read_{i}\n{seq}\n+\n{'~'*read_length}\n")
 
 def generate_sequence_with_duplication(length, k, duplication_rate):
     """Generate a sequence with controlled duplication rate"""
@@ -97,10 +135,10 @@ def compare_deduplication_tools(input_fastq, output_fastq, bucket_size, num_buck
     total_reads = count_reads(input_fastq)
 
     # Test NGSReadsTreatment
-    time_taken, memory_used = run_ngsreads_treatment(input_fastq, f"{output_fastq}_ngsreads.fastq")
-    unique_reads_ngs = count_reads(f"{output_fastq}_ngsreads.fastq", unique=True)
-    dedup_percentage_ngs = (1 - unique_reads_ngs / total_reads) * 100
-    results.append(("NGSReadsTreatment", time_taken, memory_used, dedup_percentage_ngs))
+    # time_taken, memory_used = run_ngsreads_treatment(input_fastq, f"{output_fastq}_ngsreads.fastq")
+    # unique_reads_ngs = count_reads(f"{output_fastq}_ngsreads.fastq", unique=True)
+    # dedup_percentage_ngs = (1 - unique_reads_ngs / total_reads) * 100
+    # results.append(("NGSReadsTreatment", time_taken, memory_used, dedup_percentage_ngs))
 
 
     time_taken, memory_used = run_cuckoo_filter_deduplication(input_fastq, f"{output_fastq}_cuckoo.fastq", 
@@ -146,10 +184,13 @@ def test_configurations(sequence_length=10000, k=21, bucket_size=4, num_buckets=
 
 def main():
     """Main execution function"""
+    random.seed(42)
     test_configurations()
 
     # Run deduplication comparison
     input_fastq = "input_reads.fastq"
+    if not os.path.exists(input_fastq):
+        generate_synthetic_fastq(input_fastq, num_reads=10000, read_length=100, duplication_rate=0.5)
     output_fastq = "output"
     print("\nRunning Deduplication Comparison")
     compare_deduplication_tools(input_fastq, output_fastq, 

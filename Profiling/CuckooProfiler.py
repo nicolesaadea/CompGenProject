@@ -9,7 +9,7 @@ import subprocess
 import random
 import gc
 from Bio import SeqIO
-from CuckooFilterImpl import CuckooFilter
+from Implementations.CuckooFilter import CuckooFilter
 import subprocess
 
 # def profile_memory(func, *args, **kwargs):

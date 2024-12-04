@@ -1,0 +1,34 @@
+CompGenProject
+==============
+
+Overview:
+This repository contains implementations and tools for data deduplication, frequency tracking, and performance evaluation. The project is organized into folders for implementations, testing, profiling, and data.
+
+Folder Structure:
+-----------------
+- Implementations
+  - CountingCuckooFilter.py: Tracks membership and frequency.
+  - CountMinSketch.py: Estimates item frequencies with low memory usage.
+  - CuckooFilter.py: Probabilistic membership testing.
+  - CuckooFilterWithCMS.py: Combines Cuckoo Filter and Count-Min Sketch.
+  - EnhancedKMerTracker.py: Tracks k-mers efficiently using hybrid methods.
+  - KMerTracker.py: Tracks k-mers with separate data structures.
+
+- Testers
+  - Tests basic functionality of all implementations (insert, lookup, delete, frequency tracking).
+    - CountingCuckooFilterTester.py
+    - CountMinSketchTester.py
+    - CuckooFilterTester.py
+    - CuckooFilterWithCMSTester.py
+    - EnhancedKMerTrackerTester.py
+    - KMerTrackerTester.py
+
+- Profiling
+  - Benchmarks memory, speed, and accuracy of implementations.
+  - Scripts:
+    - CuckooProfiler.py
+  - Tools:
+    - NgsReadsTreatment_v1.3.jar: Java tool for preprocessing genomic data (used for comparison).
+
+- ProfilingData
+  - 

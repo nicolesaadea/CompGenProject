@@ -1,9 +1,9 @@
-from CountingCuckooFilterImp import CountingCuckooFilter
-from CountMinSketchImp import CountMinSketch
+from CountingCuckooFilter import CountingCuckooFilter
+from CountMinSketch import CountMinSketch
 
 class EnhancedKMerTracker:
     """
-    Enhanced KMer Frequency Tracker combining Counting Cuckoo Filter and Count-Min Sketch. 
+    k-mer Frequency Tracker combining Counting Cuckoo Filter and Count-Min Sketch. 
     Prioritizes accuracy for low-frequency k-mers and scalability for high-frequency k-mers.
     
     Fields:

@@ -3,65 +3,74 @@ from memory_profiler import memory_usage
 import matplotlib.pyplot as plt
 import tracemalloc
 import os
+import psutil
+import time
+import subprocess
 import random
 import gc
 from Bio import SeqIO
 from CuckooFilterImpl import CuckooFilter
 import subprocess
 
-def profile_memory(func, *args, **kwargs):
-    """Profile memory usage of a function"""
-    gc.collect()
-    mem_usage = memory_usage((func, args, kwargs), interval=0.1)
-    gc.collect()
-    return max(mem_usage) - min(mem_usage)
+# def profile_memory(func, *args, **kwargs):
+#     """Profile net change in memory usage of a function."""
+#     gc.collect()
+#     # Get memory usage before function execution
+#     start_mem = memory_usage()[0]
+#     func(*args, **kwargs)
+#     gc.collect()
+#     # Get memory usage after function execution
+#     end_mem = memory_usage()[0]
+#     # Calculate net change in memory usage
+#     mem_diff = end_mem - start_mem
+#     return mem_diff
 
 def get_kmers(sequence, k):
     """Get all kmers for a sequence"""
     for i in range(len(sequence) - k + 1):
         yield sequence[i:i + k]
 
+import psutil
+import time
+
 def profile_cuckoo_filter(cf, sequence, k):
-    """Profile a cuckoo filter's performance."""
+    """Profile a cuckoo filter's performance using psutil."""
     inserted_kmers = list(get_kmers(sequence, k))
-
-    # Set up memory tracking
-    tracemalloc.start()
-
+    
+    process = psutil.Process(os.getpid())
+    max_memory = process.memory_info().rss / (1024 * 1024)  # Initial memory in MB
+    
     # Time and memory for insertion
     start_time = time.perf_counter()
     for kmer in inserted_kmers:
         cf.insert(kmer)
+        mem_usage_mb = process.memory_info().rss / (1024 * 1024)
+        if mem_usage_mb > max_memory:
+            max_memory = mem_usage_mb
     insertion_time = time.perf_counter() - start_time
-    current, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    insertion_memory = peak / (1024 * 1024)  # Convert to MB
-
-
-
-    # Lookup testing with a larger sample size
+    insertion_memory = max_memory
+    
+    # Lookup operations (as before)
     lookup_kmers_present = random.sample(inserted_kmers, min(1000, len(inserted_kmers)))
     lookup_kmers_absent = [''.join(random.choices('ACGT', k=k)) for _ in range(1000)]
     total_lookups = lookup_kmers_present + lookup_kmers_absent
     random.shuffle(total_lookups)
-
-    # Time lookup operations
+    
     start_time = time.perf_counter()
     lookup_results = [cf.lookup(kmer) for kmer in total_lookups]
     lookup_time = time.perf_counter() - start_time
-
-    # Calculate true positive and false positive rates
+    
     true_positives = sum(1 for i in range(len(lookup_kmers_present)) if lookup_results[i])
     false_positives = sum(1 for i in range(len(lookup_kmers_present), len(total_lookups)) if lookup_results[i])
     
     tpr = true_positives / len(lookup_kmers_present)
     fpr = false_positives / len(lookup_kmers_absent)
-
+    
     print(f"Insertion Time: {insertion_time:.4f} seconds")
     print(f"Peak Memory Used for Insertion: {insertion_memory:.4f} MB")
     print(f"Lookup Time for {len(total_lookups)} k-mers: {lookup_time:.4f} seconds")
-    print(f"True Positive Rate: {true_positives / len(lookup_kmers_present):.4f}")
-    print(f"False Positive Rate: {false_positives / len(lookup_kmers_absent):.4f}")
+    print(f"True Positive Rate: {tpr:.4f}")
+    print(f"False Positive Rate: {fpr:.4f}")
     
     return {
         "insertion_time": insertion_time,
@@ -70,6 +79,7 @@ def profile_cuckoo_filter(cf, sequence, k):
         "true_positive_rate": tpr,
         "false_positive_rate": fpr
     }
+
     
     
     
@@ -106,40 +116,71 @@ def generate_sequence_with_duplication(length, k, duplication_rate):
     random.shuffle(all_kmers)
     return ''.join(all_kmers)
 
-def run_ngsreads_treatment(input_fastq, output_fastq):
-    """Run NGSReadsTreatment and profile its performance"""
-    start_time = time.time()
-    initial_memory = memory_usage()[0]
+
+def run_ngsreads_treatment(input_fastq):
+    """Run NGSReadsTreatment and profile its performance using psutil."""
+    command = f"java -jar NGSReadsTreatment_v1.3.jar {input_fastq} 2"
     
-    command = f"NGSReadsTreatment -i {input_fastq} -o {output_fastq}"
-    subprocess.run(command, shell=True)
+    # Start the subprocess
+    process = subprocess.Popen(command, shell=True)
+    ps_process = psutil.Process(process.pid)
+    
+    start_time = time.time()
+    max_memory = 0
+    
+    # Monitor the process until it finishes
+    while process.poll() is None:
+        try:
+            # Get the memory usage of the subprocess
+            mem_info = ps_process.memory_info()
+            memory_usage_mb = mem_info.rss / (1024 * 1024)  # Convert to MB
+            if memory_usage_mb > max_memory:
+                max_memory = memory_usage_mb
+        except psutil.NoSuchProcess:
+            # The process might have already finished
+            break
+        time.sleep(0.1)  # Poll every 100 ms
     
     end_time = time.time()
-    final_memory = memory_usage()[0]
+    elapsed_time = end_time - start_time
     
-    return end_time - start_time, final_memory - initial_memory
+    return elapsed_time, max_memory
+
+
 
 def run_cuckoo_filter_deduplication(input_fastq, output_fastq, bucket_size, num_buckets, k):
-    """Run Cuckoo filter deduplication and profile its performance"""
+    """Run Cuckoo filter deduplication and profile its performance using psutil."""
+    gc.collect()
+    process = psutil.Process(os.getpid())
+    baseline_memory = process.memory_info().rss / (1024 * 1024)  # Initial memory in MB
+    max_memory = baseline_memory
+    last_sample_time = time.time()
+    sample_interval = 0.1  # Sample every 0.1 seconds
+
     cf = CuckooFilter(bucket_size=bucket_size, num_buckets=num_buckets)
-    
+
     def deduplicate_reads():
-        seen_kmers = set()  # For verification
+        nonlocal max_memory, last_sample_time  # Declare variables as nonlocal
         with open(output_fastq, "w") as out_handle:
-            for record in SeqIO.parse(input_fastq, "fastq"):
+            for idx, record in enumerate(SeqIO.parse(input_fastq, "fastq")):
                 kmer = str(record.seq[:k])
                 if not cf.lookup(kmer):
                     cf.insert(kmer)
-                    seen_kmers.add(kmer)  # For verification
                     SeqIO.write(record, out_handle, "fastq")
-        return len(seen_kmers)
+                # Monitor memory usage every 0.1 seconds
+                current_time = time.time()
+                if current_time - last_sample_time >= sample_interval:
+                    mem_usage_mb = process.memory_info().rss / (1024 * 1024)
+                    max_memory = max(max_memory, mem_usage_mb)
+                    last_sample_time = current_time
 
     start_time = time.time()
-    # Properly scope the memory profiling
-    memory_used = profile_memory(deduplicate_reads)
+    deduplicate_reads()
     elapsed_time = time.time() - start_time
 
-    return elapsed_time, memory_used
+    net_memory_usage = max_memory - baseline_memory
+    return elapsed_time, net_memory_usage
+
 
 def count_reads(fastq_file, unique=False):
     """Count total or unique reads in a FASTQ file"""
@@ -151,23 +192,25 @@ def count_reads(fastq_file, unique=False):
     return sum(1 for _ in SeqIO.parse(fastq_file, "fastq"))
 
 def compare_deduplication_tools(input_fastq, output_fastq, bucket_size, num_buckets, k):
-    """Compare different deduplication tools"""
+    """Compare different deduplication tools using consistent memory profiling."""
     results = []
     total_reads = count_reads(input_fastq)
 
     # Test NGSReadsTreatment
-    # time_taken, memory_used = run_ngsreads_treatment(input_fastq, f"{output_fastq}_ngsreads.fastq")
-    # unique_reads_ngs = count_reads(f"{output_fastq}_ngsreads.fastq", unique=True)
-    # dedup_percentage_ngs = (1 - unique_reads_ngs / total_reads) * 100
-    # results.append(("NGSReadsTreatment", time_taken, memory_used, dedup_percentage_ngs))
+    time_taken, memory_used = run_ngsreads_treatment(input_fastq)
+    new_input_fastq = input_fastq.split(".")[0]
+    unique_reads_ngs = count_reads(f"{new_input_fastq}_1_trated.fastq", unique=True)
+    dedup_percentage_ngs = (1 - unique_reads_ngs / total_reads) * 100
+    results.append(("NGSReadsTreatment", time_taken, memory_used, dedup_percentage_ngs))
 
-
-    time_taken, memory_used = run_cuckoo_filter_deduplication(input_fastq, f"{output_fastq}_cuckoo.fastq", 
-                                                            bucket_size, num_buckets, k)
+    # Test Cuckoo Filter Deduplication
+    time_taken, memory_used = run_cuckoo_filter_deduplication(
+        input_fastq, f"{output_fastq}_cuckoo.fastq",
+        bucket_size, num_buckets, k
+    )
     unique_reads_cuckoo = count_reads(f"{output_fastq}_cuckoo.fastq", unique=True)
     dedup_percentage_cuckoo = (1 - unique_reads_cuckoo / total_reads) * 100
     results.append(("Cuckoo Filter", time_taken, memory_used, dedup_percentage_cuckoo))
-
 
     print("\nComparison Results:")
     for tool, time_taken, memory_used, dedup_percentage in results:

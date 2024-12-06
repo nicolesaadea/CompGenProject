@@ -9,10 +9,10 @@ class EnhancedKMerTracker:
     Fields:
         cuckoo_filter (CountingCuckooFilter): Tracks exact frequencies for low-frequency k-mers
         cms (CountMinSketch): Tracks approximate frequencies for high-frequency k-mers
-        threshold (int): Frequency threshold for moving k-mers from the Cuckoo Filter to the Count-Min Sketch
+        freq_threshold (int): Frequency threshold for moving k-mers from the Cuckoo Filter to the Count-Min Sketch
     """
 
-    def __init__(self, cuckoo_bucket_size, cuckoo_num_buckets, cms_width, cms_depth, threshold):
+    def __init__(self, cuckoo_bucket_size, cuckoo_num_buckets, cms_width, cms_depth, freq_threshold):
         """
         Initialize the EnhancedKMerTracker with specified parameters.
         
@@ -21,11 +21,11 @@ class EnhancedKMerTracker:
             cuckoo_num_buckets (int): Total number of buckets in Cuckoo Filter
             cms_width (int): Number of buckets per hash function row in Count-Min Sketch
             cms_depth (int): Number of hash functions in Count-Min Sketch
-            threshold (int): Frequency threshold for moving k-mers to Count-Min Sketch
+            freq_threshold (int): Frequency threshold for moving k-mers to Count-Min Sketch
         """
         self.cuckoo_filter = CountingCuckooFilter(cuckoo_bucket_size, cuckoo_num_buckets)
         self.cms = CountMinSketch(cms_width, cms_depth)
-        self.threshold = threshold
+        self.freq_threshold = freq_threshold
 
     def add_kmer(self, kmer):
         """
@@ -45,7 +45,7 @@ class EnhancedKMerTracker:
             # Insert the k-mer into the Cuckoo Filter
             self.cuckoo_filter.insert(kmer)
         
-        elif self.cuckoo_filter.get_count(kmer) >= self.threshold:
+        elif self.cuckoo_filter.get_count(kmer) >= self.freq_threshold:
             # Migrate to Count-Min Sketch if above threshold
             count = self.cuckoo_filter.get_count(kmer)
             self.cms.add(kmer)

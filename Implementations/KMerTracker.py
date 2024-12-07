@@ -39,7 +39,7 @@ class KMerTracker:
         # Update frequency in the Count-Min Sketch
         self.cms.add(kmer)
 
-    def get_count(self, kmer):
+    def get_kmer_frequency(self, kmer):
         """
         Retrieve the estimated frequency of a k-mer using the Count-Min Sketch.
 

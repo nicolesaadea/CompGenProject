@@ -1,16 +1,27 @@
+import sys
+import os
+
+# Add the parent directory to sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
+sys.path.insert(0, parent_dir)
+
 import time
 from memory_profiler import memory_usage
 import matplotlib.pyplot as plt
 import tracemalloc
-import os
 import psutil
 import time
 import subprocess
 import random
+import itertools
 import gc
 from Bio import SeqIO
 from Implementations.CuckooFilter import CuckooFilter
+from Implementations.EnhancedKMerTracker import EnhancedKMerTracker
+from Implementations.DynamicKMerTracker import DynamicKMerTracker
 import subprocess
+
 
 # def profile_memory(func, *args, **kwargs):
 #     """Profile net change in memory usage of a function."""
@@ -181,6 +192,71 @@ def run_cuckoo_filter_deduplication(input_fastq, output_fastq, bucket_size, num_
     net_memory_usage = max_memory - baseline_memory
     return elapsed_time, net_memory_usage
 
+def run_enhanced_kmer_tracker_deduplication(input_fastq, output_fastq, bucket_size, num_buckets, k):
+    """Run EnhancedKmerTracker deduplication and profile its performance using psutil."""
+    gc.collect()
+    process = psutil.Process(os.getpid())
+    baseline_memory = process.memory_info().rss / (1024 * 1024)  # Initial memory in MB
+    max_memory = baseline_memory
+    last_sample_time = time.time()
+    sample_interval = 0.1  # Sample every 0.1 seconds
+
+    cf = EnhancedKMerTracker(cuckoo_bucket_size=bucket_size, cuckoo_num_buckets=num_buckets, cms_width=10, cms_depth=2000, freq_threshold=100)
+    
+    def deduplicate_reads():
+        nonlocal max_memory, last_sample_time
+        with open(output_fastq, "w") as out_handle:
+            for idx, record in enumerate(SeqIO.parse(input_fastq, "fastq")):
+                kmer = str(record.seq[:k])
+                cf.add_kmer(kmer)
+                if cf.get_kmer_frequency(kmer) > 0:
+                    SeqIO.write(record, out_handle, "fastq")
+                # Monitor memory usage every 0.1 seconds
+                current_time = time.time()
+                if current_time - last_sample_time >= sample_interval:
+                    mem_usage_mb = process.memory_info().rss / (1024 * 1024)
+                    max_memory = max(max_memory, mem_usage_mb)
+                    last_sample_time = current_time
+                
+    start_time = time.time()
+    deduplicate_reads()
+    elapsed_time = time.time() - start_time
+    
+    net_memory_usage = max_memory - baseline_memory
+    return elapsed_time, net_memory_usage
+
+def run_dynamic_kmer_tracker_deduplication(input_fastq, output_fastq, bucket_size, num_buckets, k):
+    """Run DynamicKMerTracker deduplication and profile its performance using psutil."""
+    gc.collect()
+    process = psutil.Process(os.getpid())
+    baseline_memory = process.memory_info().rss / (1024 * 1024)  # Initial memory in MB
+    max_memory = baseline_memory
+    last_sample_time = time.time()
+    sample_interval = 0.1  # Sample every 0.1 seconds
+
+    cf = DynamicKMerTracker(cuckoo_bucket_size=bucket_size, cuckoo_num_buckets=num_buckets, cms_width=10, cms_depth=2000, initial_freq_threshold=50, use_threshold=0.75, smoothing_window=10)
+    
+    def deduplicate_reads():
+        nonlocal max_memory, last_sample_time
+        with open(output_fastq, "w") as out_handle:
+            for idx, record in enumerate(SeqIO.parse(input_fastq, "fastq")):
+                kmer = str(record.seq[:k])
+                cf.add_kmer(kmer)
+                if cf.get_kmer_frequency(kmer) > 0:
+                    SeqIO.write(record, out_handle, "fastq")
+                # Monitor memory usage every 0.1 seconds
+                current_time = time.time()
+                if current_time - last_sample_time >= sample_interval:
+                    mem_usage_mb = process.memory_info().rss / (1024 * 1024)
+                    max_memory = max(max_memory, mem_usage_mb)
+                    last_sample_time = current_time
+                
+    start_time = time.time()
+    deduplicate_reads()
+    elapsed_time = time.time() - start_time
+    
+    net_memory_usage = max_memory - baseline_memory
+    return elapsed_time, net_memory_usage
 
 def count_reads(fastq_file, unique=False):
     """Count total or unique reads in a FASTQ file"""
@@ -197,11 +273,11 @@ def compare_deduplication_tools(input_fastq, output_fastq, bucket_size, num_buck
     total_reads = count_reads(input_fastq)
 
     # Test NGSReadsTreatment
-    time_taken, memory_used = run_ngsreads_treatment(input_fastq)
-    new_input_fastq = input_fastq.split(".")[0]
-    unique_reads_ngs = count_reads(f"{new_input_fastq}_1_trated.fastq", unique=True)
-    dedup_percentage_ngs = (1 - unique_reads_ngs / total_reads) * 100
-    results.append(("NGSReadsTreatment", time_taken, memory_used, dedup_percentage_ngs))
+    # time_taken, memory_used = run_ngsreads_treatment(input_fastq)
+    # new_input_fastq = input_fastq.split(".")[0]
+    # unique_reads_ngs = count_reads(f"{new_input_fastq}_1_trated.fastq", unique=True)
+    # dedup_percentage_ngs = (1 - unique_reads_ngs / total_reads) * 100
+    # results.append(("NGSReadsTreatment", time_taken, memory_used, dedup_percentage_ngs))
 
     # Test Cuckoo Filter Deduplication
     time_taken, memory_used = run_cuckoo_filter_deduplication(
@@ -211,6 +287,23 @@ def compare_deduplication_tools(input_fastq, output_fastq, bucket_size, num_buck
     unique_reads_cuckoo = count_reads(f"{output_fastq}_cuckoo.fastq", unique=True)
     dedup_percentage_cuckoo = (1 - unique_reads_cuckoo / total_reads) * 100
     results.append(("Cuckoo Filter", time_taken, memory_used, dedup_percentage_cuckoo))
+    
+    #Test EnhancedKmerTracker Deduplication
+    time_taken, memory_used = run_enhanced_kmer_tracker_deduplication(
+        input_fastq, f"{output_fastq}_enhanced_kmer_tracker.fastq", bucket_size, num_buckets, k
+    )
+    unique_reads_enhanced_kmer_tracker = count_reads(f"{output_fastq}_enhanced_kmer_tracker.fastq", unique=True)
+    dedup_percentage_enhanced_kmer_tracker = (1 - unique_reads_enhanced_kmer_tracker / total_reads) * 100
+    results.append(("Enhanced KMer Tracker", time_taken, memory_used, dedup_percentage_enhanced_kmer_tracker))
+    
+    #Test DynamicKMerTracker Deduplication
+    time_taken, memory_used = run_dynamic_kmer_tracker_deduplication(
+        input_fastq, f"{output_fastq}_dynamic_kmer_tracker.fastq", bucket_size, num_buckets, k
+    )
+    unique_reads_dynamic_kmer_tracker = count_reads(f"{output_fastq}_dynamic_kmer_tracker.fastq", unique=True)
+    dedup_percentage_dynamic_kmer_tracker = (1 - unique_reads_dynamic_kmer_tracker / total_reads) * 100
+    results.append(("Dynamic KMer Tracker", time_taken, memory_used, dedup_percentage_dynamic_kmer_tracker))
+    
 
     print("\nComparison Results:")
     for tool, time_taken, memory_used, dedup_percentage in results:
@@ -351,7 +444,40 @@ def main():
     random.seed(42)
     test_configurations()
 
-    # Run deduplication comparison
+    # Run deduplication comparison for 0.25, 0.5, 0.75, and 0.9 duplication rates, as well as the 
+    # given real-world FASTQ file(s)
+    
+    # Make the synthetic FASTQ file(s) for testing, if they do not already exist
+    for rate in [0.25, 0.5, 0.75, 0.9]:
+        input_fastq = f"input_reads_{rate}.fastq"
+        if not os.path.exists(input_fastq):
+            generate_synthetic_fastq(input_fastq, num_reads=100000, read_length=100, duplication_rate=rate)
+    
+    # Run deduplication comparison for the synthetic FASTQ files
+    output_fastq = "output"
+    print("\nRunning Deduplication Comparison")
+    compare_deduplication_tools("input_reads_.25.fastq", f"{output_fastq}_.25", bucket_size=4, num_buckets=50000, k=21)
+    compare_deduplication_tools("input_reads_.5.fastq", f"{output_fastq}_.5", bucket_size=4, num_buckets=50000, k=21)
+    compare_deduplication_tools("input_reads_.75.fastq", f"{output_fastq}_.75", bucket_size=4, num_buckets=50000, k=21)
+    compare_deduplication_tools("input_reads_.9.fastq", f"{output_fastq}_.9", bucket_size=4, num_buckets=50000, k=21)
+    
+    # Run deduplication comparison for a real-world FASTQ file
+    input_fastq1 = "ProfilingData/ERR101899_1.fastq"
+    
+    # Run deduplication comparison for the real-world FASTQ file
+    output_fastq1 = "output1"
+    print("\nRunning Deduplication Comparison")
+    compare_deduplication_tools(input_fastq1, output_fastq1, bucket_size=4, num_buckets=50000, k=21)
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
     input_fastq = "input_reads.fastq"
     if not os.path.exists(input_fastq):
         generate_synthetic_fastq(input_fastq, num_reads=10000, read_length=100, duplication_rate=0.5)

@@ -27,8 +27,19 @@ Folder Structure:
   - Benchmarks memory, speed, and accuracy of implementations.
   - Scripts:
     - CuckooProfiler.py
+    - CFProfiler.py
+    - FrequencyProfiling.py
+    - NGSProfilier.py
+
   - Tools:
     - NgsReadsTreatment_v1.3.jar: Java tool for preprocessing genomic data (used for comparison).
 
 - ProfilingData
-  - 
+  - Escherichia coli O103 str. 12009
+  - Maliciobacter halophilus.fasta
+  - Mycobacterium Tuberculosis KN4207.fasta
+  - Mycobacterium bovis BCG str. Korea 1168P.fasta
+  - Mycobacterium tuberculosis variant bovis BCG str. Korea 1168P, complete sequence.fasta
+  - input_reads.fastq
+  - input_reads_Report.log
+
